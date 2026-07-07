@@ -16,9 +16,12 @@ low the battery is, how much time pressure the task is under).
 
 The system is never told what the user wants. It learns their expectations
 online, from nothing but approve/reject feedback, using an online logistic
-regression over context×behaviour features. At each step it picks the
-configuration it predicts the user will most approve of, and explains why in
-plain language.
+regression over `context × behaviour` interaction features. Crucially, the
+feature set mixes the three genuine expectation signals with six distractor
+interactions, so the model has to **discover** which expectations actually
+matter rather than being handed them. A decaying epsilon-greedy policy keeps the
+early feedback spread across the option space. At each step the system picks the
+configuration it predicts the user will most approve of, and explains why.
 
 The three parts map onto the goals of the project this was built to align with
 (the Vetenskapsrådet / Swedish Research Council project in the Chalmers PhD ad
@@ -29,6 +32,16 @@ Asst. Prof. Rebekka Wohlrab):
 2. **Explanation** — justifies each decision from the learned model itself.
 3. **Simulation-based evaluation** — measures how fast the learner's choices come
    to match the user's true preference, against a static baseline.
+
+## Faithful explanations
+
+The explanations are constrained to be faithful, not narrated after the fact. A
+reason is only surfaced when all three of these hold at once: the cited context
+signal is actually high in the current situation, the chosen mode actually has
+the cited attribute, and the model has *learned* that this pairing is desirable
+(a positive weight). Reasons are then ranked by how strongly they drove the
+decision. This means the system cannot give a plausible-sounding reason that is
+not grounded in both the situation and what it actually learned.
 
 ## Result
 
@@ -41,9 +54,16 @@ After 6000 episodes, on the last 1000:
 | Learned expectation model | ~79% |
 | Static "always Balanced" baseline | ~0.3% |
 
-The model recovers all three genuine expectation signals as positive without
-being told which features matter, and produces correct, faithful explanations,
-e.g.:
+The model recovers all three genuine expectation signals as positive weights,
+without being told which of the nine features matter, e.g. from one run:
+
+```
+crowd x caution      : +0.80
+battery_low x energy : +2.59
+time x speed         : +0.44
+```
+
+and produces correct, faithful explanations, e.g.:
 
 ```
 - crowded area, healthy battery, no rush
