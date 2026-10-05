@@ -35,8 +35,8 @@ Asst. Prof. Rebekka Wohlrab):
 3. **Simulation-based evaluation** — measures how fast the learner's choices come
    to match the user's true preference, against a static baseline.
 4. **Formal planning and verification** — turns the learned expectations into
-   the reward of an MDP, computes an optimal adaptation policy, and checks
-   probabilistic properties of it with PRISM.
+   the reward of an MDP, computes an optimal adaptation policy, explains it with
+   reward decomposition, and checks probabilistic properties with PRISM.
 
 ## Faithful explanations
 
@@ -111,13 +111,28 @@ Exact evaluation from a full battery, no progress, quiet area:
 
 The greedy learner pleases the user step by step but runs out of battery in
 more than half of missions; the planner gets slightly *higher* total approval
-while cutting the battery-failure rate by more than half. Example disagreements:
+while cutting the battery-failure rate by more than half.
+
+## Explaining the planner — reward decomposition
+
+To explain *why* the planner deviates from what the user would approve of right
+now, the MDP value is split into three channels — learned user approval,
+battery-failure risk and deadline risk — which sum exactly to the planner's
+value (reward decomposition, as used in explainable RL for self-adaptive
+systems, e.g. XRL-DINE). Explanations are given only at **important moments**:
+states where the planner overrides the greedy learner, ranked by how likely the
+mission is to reach them. Each is contrastive ("why X rather than Y?"):
 
 ```
-t= 0 battery=4 progress=0:  MDP -> Eco        greedy -> Cautious
-t= 4 battery=4 progress=0:  MDP -> Eco        greedy -> Aggressive
-t= 8 battery=4 progress=2:  MDP -> Cautious   greedy -> Aggressive
+t= 0 battery=4 progress=0 crowd=quiet  (reached with p=1.00)
+    Eco rather than Cautious: gives up 0.09 user approval, cuts 0.16 battery risk, cuts 0.02 deadline risk
+t= 1 battery=3 progress=0 crowd=quiet  (reached with p=0.12)
+    Eco rather than Aggressive: gains 0.53 user approval, cuts 0.22 battery risk, adds 0.17 deadline risk
 ```
+
+The second line shows a long-horizon effect a one-step learner cannot see:
+`Aggressive` looks best *now*, but conserving battery yields more total approval
+over the rest of the mission.
 
 ## Result 3 — probabilistic model checking (PRISM)
 

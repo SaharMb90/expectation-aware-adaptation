@@ -366,7 +366,7 @@ def solve_mdp(model: ExpectationModel):
     return V, policy
 
 
-def evaluate_policy(model: ExpectationModel, choose) -> dict:
+def evaluate_policy(model: ExpectationModel, choose, visits=None) -> dict:
     """Exact evaluation of a fixed policy by propagating the state
     distribution (a policy turns the MDP into a Markov chain, which is
     what a probabilistic model checker analyses)."""
@@ -379,6 +379,8 @@ def evaluate_policy(model: ExpectationModel, choose) -> dict:
                 key = "done" if p == P_MAX else ("battery_empty" if b == 0 else "missed")
                 res[key] += pr
                 continue
+            if visits is not None:
+                visits[(t, b, p, c)] = pr
             a = choose((t, b, p, c))
             res["approval"] += pr * model.approval_prob(mdp_context(t, b, p, c), a)
             for q, b2, p2, c2 in transitions(b, p, c, a):
@@ -386,6 +388,45 @@ def evaluate_policy(model: ExpectationModel, choose) -> dict:
                 nxt[k] = nxt.get(k, 0.0) + pr * q
         dist = nxt
     return res
+
+
+
+CHANNELS = ("user approval", "battery risk", "deadline risk")
+
+
+def decompose_values(model: ExpectationModel, policy):
+    """Reward decomposition: split the planner's value into three channels
+    (learned approval, battery-failure penalty, deadline penalty), following
+    the optimal policy. The channels sum exactly to the MDP value."""
+    Vc = np.zeros((3, H + 1, B_MAX + 1, P_MAX + 1, 2))
+    for t in range(H, -1, -1):
+        for b in range(B_MAX + 1):
+            for p in range(P_MAX + 1):
+                for c in range(2):
+                    if is_terminal(t, b, p):
+                        if p < P_MAX:
+                            Vc[1 if b == 0 else 2, t, b, p, c] = -FAIL_PENALTY
+                    else:
+                        Vc[:, t, b, p, c] = q_channels(model, Vc, (t, b, p, c),
+                                                       policy[(t, b, p, c)])
+    return Vc
+
+
+def q_channels(model, Vc, s, a) -> np.ndarray:
+    t, b, p, c = s
+    q = np.array([model.approval_prob(mdp_context(*s), a), 0.0, 0.0])
+    for pr, b2, p2, c2 in transitions(b, p, c, a):
+        q += pr * Vc[:, t + 1, b2, p2, c2]
+    return q
+
+
+def explain_contrastive(model, Vc, s, chosen, alternative) -> str:
+    """'Why <chosen> rather than <alternative>?' in terms of the channels."""
+    diff = q_channels(model, Vc, s, chosen) - q_channels(model, Vc, s, alternative)
+    words = (("gives up", "gains"), ("adds", "cuts"), ("adds", "cuts"))
+    parts = [f"{words[i][int(d > 0)]} {abs(d):.2f} {CHANNELS[i]}"
+             for i, d in enumerate(diff) if abs(d) >= 0.01]
+    return f"{chosen} rather than {alternative}: " + ", ".join(parts)
 
 
 def export_prism(model: ExpectationModel, path: str = "adaptation_mdp.prism"):
@@ -453,18 +494,24 @@ def mdp_report(model: ExpectationModel) -> None:
     for name, r in rows.items():
         print(f"{name:<24}{r['approval']:>10.2f}{r['done']:>9.1%}"
               f"{r['battery_empty']:>9.1%}{r['missed']:>9.1%}")
-    print("\nWhere the planner and the greedy learner disagree (crowd=quiet):")
-    shown = 0
-    for t in (0, 4, 8):
-        for b in (B_MAX, 2, 1):
-            for p in (0, 2):
-                s = (t, b, p, 0)
-                if s in policy and policy[s] != greedy(s) and shown < 6:
-                    print(f"  t={t:>2} battery={b} progress={p}:  MDP -> {policy[s]:<10}"
-                          f" greedy -> {greedy(s)}")
-                    shown += 1
-    if shown == 0:
-        print("  (none in the sampled states)")
+    # ---- explanations at the important moments --------------------------
+    # "Important" = states where the planner overrides the greedy learner,
+    # ranked by how likely the mission is to actually reach them.
+    visits = {}
+    evaluate_policy(model, lambda s: policy[s], visits)
+    Vc = decompose_values(model, policy)
+    important, seen = [], set()
+    for s in sorted(visits, key=visits.get, reverse=True):
+        key = (s[1:], policy[s], greedy(s))      # skip near-duplicate moments
+        if policy[s] != greedy(s) and key not in seen and len(important) < 3:
+            important.append(s)
+            seen.add(key)
+    print("\nWhy the planner overrides the greedy learner (top-3 most likely moments):")
+    for s in important:
+        t, b, p, c = s
+        print(f"  t={t:>2} battery={b} progress={p} crowd={'busy' if c else 'quiet'}"
+              f"  (reached with p={visits[s]:.2f})")
+        print(f"      {explain_contrastive(model, Vc, s, policy[s], greedy(s))}")
 
     # ---- policy comparison plot -----------------------------------------
     outcomes = (("done", "Task done", "#2e7d32"),
