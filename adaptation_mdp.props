@@ -1,0 +1,8 @@
+// best achievable probability of finishing the task
+Pmax=? [ F "done" ]
+// lowest achievable risk of an empty battery
+Pmin=? [ F "battery_empty" ]
+// is there a policy keeping battery risk at or below 5%? (true/false)
+Pmin=? [ F "battery_empty" ] <= 0.05
+// best achievable expected total approval
+R{"approval"}max=? [ F ("done" | "battery_empty" | "missed") ]
